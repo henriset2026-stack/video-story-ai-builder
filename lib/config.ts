@@ -1,0 +1,107 @@
+import "server-only";
+import { z } from "zod";
+
+// Validated server configuration. Server-only: importing this from a Client Component fails the build,
+// so secrets such as AI_PROVIDER_API_KEY and SUPABASE_SERVICE_ROLE_KEY can never reach the browser.
+
+export const AI_PROVIDERS = ["anthropic", "openai", "gemini"] as const;
+export type AIProviderName = (typeof AI_PROVIDERS)[number];
+
+export const DEFAULT_MODELS: Record<AIProviderName, string> = {
+  anthropic: "claude-sonnet-5",
+  openai: "gpt-5-mini",
+  gemini: "gemini-2.5-flash",
+};
+
+const bool = z
+  .enum(["true", "false", "1", "0", ""])
+  .optional()
+  .transform((v) => v === "true" || v === "1");
+
+const optionalString = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v ? v : undefined));
+
+const EnvSchema = z.object({
+  AI_PROVIDER: z.enum(AI_PROVIDERS).default("anthropic"),
+  AI_PROVIDER_API_KEY: optionalString,
+  AI_MODEL: optionalString,
+  AI_MOCK_MODE: bool,
+  AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
+  AI_MOCK_LATENCY_MS: z.coerce.number().int().min(0).max(5_000).default(250),
+  NEXT_PUBLIC_SUPABASE_URL: optionalString,
+  SUPABASE_SERVICE_ROLE_KEY: optionalString,
+  STORAGE_DRIVER: z.enum(["supabase", "local"]).optional(),
+  LOCAL_DATA_DIR: z.string().default(".data"),
+});
+
+export interface AppConfig {
+  ai: {
+    provider: AIProviderName;
+    apiKey: string | undefined;
+    model: string;
+    /** True when AI_MOCK_MODE is set or no API key is configured. */
+    mock: boolean;
+    mockReason: "env" | "missing-key" | null;
+    timeoutMs: number;
+    mockLatencyMs: number;
+  };
+  storage: {
+    driver: "supabase" | "local";
+    supabaseUrl: string | undefined;
+    supabaseServiceRoleKey: string | undefined;
+    localDataDir: string;
+  };
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  const parsed = EnvSchema.safeParse(env);
+  if (!parsed.success) {
+    // Report which variables are wrong without echoing their values.
+    const keys = [...new Set(parsed.error.issues.map((i) => i.path.join(".")))].join(", ");
+    throw new Error(`Invalid environment configuration: ${keys}`);
+  }
+  const e = parsed.data;
+  const supabaseConfigured = Boolean(e.NEXT_PUBLIC_SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY);
+  const mockReason = e.AI_MOCK_MODE ? "env" : !e.AI_PROVIDER_API_KEY ? "missing-key" : null;
+
+  return {
+    ai: {
+      provider: e.AI_PROVIDER,
+      apiKey: e.AI_PROVIDER_API_KEY,
+      model: e.AI_MODEL ?? DEFAULT_MODELS[e.AI_PROVIDER],
+      mock: mockReason !== null,
+      mockReason,
+      timeoutMs: e.AI_TIMEOUT_MS,
+      mockLatencyMs: e.AI_MOCK_LATENCY_MS,
+    },
+    storage: {
+      driver: e.STORAGE_DRIVER ?? (supabaseConfigured ? "supabase" : "local"),
+      supabaseUrl: e.NEXT_PUBLIC_SUPABASE_URL,
+      supabaseServiceRoleKey: e.SUPABASE_SERVICE_ROLE_KEY,
+      localDataDir: e.LOCAL_DATA_DIR,
+    },
+  };
+}
+
+let cached: AppConfig | null = null;
+
+export function getConfig(): AppConfig {
+  cached ??= loadConfig();
+  return cached;
+}
+
+/** Non-secret view of the configuration, safe to render on the Settings page. */
+export function getPublicStatus() {
+  const c = getConfig();
+  return {
+    aiProvider: c.ai.mock ? "mock" : c.ai.provider,
+    aiModel: c.ai.mock ? "deterministic mock data" : c.ai.model,
+    mockMode: c.ai.mock,
+    mockReason: c.ai.mockReason,
+    storage: c.storage.driver,
+    supabaseConfigured: Boolean(c.storage.supabaseUrl && c.storage.supabaseServiceRoleKey),
+  };
+}

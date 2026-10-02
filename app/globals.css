@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+  Design tokens — "screening room table with paper sheets".
+  Chrome is graphite; story and prompts sit on light paper sheets. Tungsten is reserved for
+  primary actions and progress, blue-hour for continuity/info, slate red for errors.
+*/
+@theme {
+  --color-graphite: #15181b;
+  --color-graphite-2: #1d2125;
+  --color-graphite-3: #2a3036;
+  --color-line: #353c43;
+  --color-fog: #a3aab1;
+  --color-chalk: #eeebe5;
+
+  --color-sheet: #eceae4;
+  --color-sheet-2: #e1ded6;
+  --color-ink: #1c1f22;
+  --color-ink-muted: #5b6168;
+  --color-rule: #cbc7bd;
+
+  --color-tungsten: #e9a93b;
+  --color-tungsten-deep: #8a5a0c;
+  --color-bluehour: #6f9bc2;
+  --color-bluehour-deep: #2f5d86;
+  --color-slate-red: #d0543f;
+  --color-slate-red-deep: #a8341f;
+
+  --font-sans: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-script: var(--font-courier-prime), "Courier New", ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background: var(--color-graphite);
+    color: var(--color-chalk);
+    font-family: var(--font-sans);
+    line-height: 1.55;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-tungsten);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background: var(--color-tungsten);
+    color: var(--color-ink);
+  }
+}
+
+@layer components {
+  /* Condensed billing-block display type. */
+  .type-billing {
+    font-variation-settings: "wdth" 66;
+    font-weight: 800;
+    letter-spacing: -0.005em;
+    line-height: 0.95;
+  }
+  .type-condensed {
+    font-variation-settings: "wdth" 78;
+  }
+
+  /* A paper sheet laid on the graphite table. */
+  .sheet {
+    background: var(--color-sheet);
+    color: var(--color-ink);
+    border-radius: 3px;
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 0.5) inset,
+      0 18px 40px -24px rgb(0 0 0 / 0.8);
+  }
+
+  /* Film-strip sprocket holes used by the landing hero. */
+  .sprockets {
+    height: 14px;
+    background-image: radial-gradient(circle, var(--color-graphite) 36%, transparent 40%);
+    background-size: 22px 14px;
+    background-repeat: repeat-x;
+    background-position: 6px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
