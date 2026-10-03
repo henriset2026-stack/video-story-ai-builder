@@ -41,6 +41,7 @@ To generate real stories, set `AI_PROVIDER` and `AI_PROVIDER_API_KEY` in `.env.l
 | `AI_PROVIDER` | no | `anthropic` | `anthropic`, `openai` or `gemini` |
 | `AI_PROVIDER_API_KEY` | for real AI | — | Server-only. Empty ⇒ mock mode |
 | `AI_MODEL` | no | per provider | Defaults: `claude-sonnet-5`, `gpt-5-mini`, `gemini-2.5-flash` |
+| `AI_BASE_URL` | no | OpenAI's API | OpenAI-compatible endpoint, e.g. an AI router like `https://router.bynara.id/v1` (with `AI_PROVIDER=openai`) |
 | `AI_MOCK_MODE` | no | `false` | Force mock data even when a key is set |
 | `AI_TIMEOUT_MS` | no | `120000` | Timeout per AI call |
 | `AI_MOCK_LATENCY_MS` | no | `250` | Delay per mock step so progress is visible |

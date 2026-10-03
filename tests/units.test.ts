@@ -7,6 +7,8 @@ import { applyReviewFixes } from "@/lib/ai/engines/continuity";
 import { MockProvider } from "@/lib/ai/mock/provider";
 import { generateStoryboard } from "@/lib/ai/orchestrator";
 import { extractJson, HttpProvider, type RawStructuredCall } from "@/lib/ai/providers/base";
+import { OpenAIProvider } from "@/lib/ai/providers/openai";
+import { loadConfig } from "@/lib/config";
 import { allocateDurations, applyContinuityRules, summarizeContinuity } from "@/lib/continuity/rules";
 import { LocalFileRepository } from "@/lib/db/local";
 import { rowsToStoredProject, sceneToRow, toCreatePayload } from "@/lib/db/mappers";
@@ -144,6 +146,37 @@ describe("provider contract", () => {
     await expect(
       p.generateStructured({ task: "story", schemaName: "s", schema, system: "", prompt: "p", input: null }),
     ).rejects.toMatchObject({ code: "AI_INVALID_RESPONSE" });
+  });
+
+  it("OpenAI provider calls the configured base URL and maps body-read timeouts to AI_TIMEOUT", async () => {
+    const urls: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      urls.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          throw Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+        },
+      } as unknown as Response;
+    }) as typeof fetch;
+    try {
+      const p = new OpenAIProvider({ apiKey: "k", model: "m", timeoutMs: 5_000, baseUrl: "https://router.example.com/v1" });
+      await expect(p.generateText({ task: "story", system: "", prompt: "p" })).rejects.toMatchObject({ code: "AI_TIMEOUT" });
+      expect(urls).toEqual(["https://router.example.com/v1/chat/completions"]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("validates AI_BASE_URL and trims its trailing slash", () => {
+    const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
+    expect(loadConfig(env({ AI_PROVIDER: "openai", AI_BASE_URL: "https://router.example.com/v1/" })).ai.baseUrl).toBe(
+      "https://router.example.com/v1",
+    );
+    expect(loadConfig(env({ AI_BASE_URL: "" })).ai.baseUrl).toBeUndefined();
+    expect(() => loadConfig(env({ AI_BASE_URL: "http://insecure.example.com" }))).toThrow(/AI_BASE_URL/);
   });
 
   it("extracts JSON wrapped in prose or code fences", () => {

@@ -28,6 +28,11 @@ const EnvSchema = z.object({
   AI_PROVIDER: z.enum(AI_PROVIDERS).default("anthropic"),
   AI_PROVIDER_API_KEY: optionalString,
   AI_MODEL: optionalString,
+  /** OpenAI-compatible endpoint (e.g. an AI router). Only used when AI_PROVIDER=openai. */
+  AI_BASE_URL: z
+    .url({ protocol: /^https$/, error: "AI_BASE_URL must be an https URL" })
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
   AI_MOCK_MODE: bool,
   AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
   AI_MOCK_LATENCY_MS: z.coerce.number().int().min(0).max(5_000).default(250),
@@ -42,6 +47,8 @@ export interface AppConfig {
     provider: AIProviderName;
     apiKey: string | undefined;
     model: string;
+    /** Base URL for the OpenAI-compatible provider, without a trailing slash. */
+    baseUrl: string | undefined;
     /** True when AI_MOCK_MODE is set or no API key is configured. */
     mock: boolean;
     mockReason: "env" | "missing-key" | null;
@@ -72,6 +79,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       provider: e.AI_PROVIDER,
       apiKey: e.AI_PROVIDER_API_KEY,
       model: e.AI_MODEL ?? DEFAULT_MODELS[e.AI_PROVIDER],
+      baseUrl: e.AI_BASE_URL?.replace(/\/+$/, ""),
       mock: mockReason !== null,
       mockReason,
       timeoutMs: e.AI_TIMEOUT_MS,
@@ -99,6 +107,8 @@ export function getPublicStatus() {
   return {
     aiProvider: c.ai.mock ? "mock" : c.ai.provider,
     aiModel: c.ai.mock ? "deterministic mock data" : c.ai.model,
+    /** Host only (never the full URL or key), e.g. "router.bynara.id". */
+    aiHost: !c.ai.mock && c.ai.provider === "openai" && c.ai.baseUrl ? new URL(c.ai.baseUrl).host : null,
     mockMode: c.ai.mock,
     mockReason: c.ai.mockReason,
     storage: c.storage.driver,

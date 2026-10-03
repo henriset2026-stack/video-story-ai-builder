@@ -150,6 +150,10 @@ export abstract class HttpProvider implements AIProvider {
     try {
       return (await response.json()) as unknown;
     } catch (error) {
+      // The timeout signal also covers reading the body: a slow model can time out mid-response.
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+        throw new AppError("AI_TIMEOUT", { cause: error, detail: `${this.name}: timed out reading the response` });
+      }
       throw new AppError("AI_INVALID_RESPONSE", { cause: error, detail: `${this.name}: invalid JSON body` });
     }
   }

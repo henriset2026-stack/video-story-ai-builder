@@ -17,7 +17,7 @@ export function getAIProvider(): AIProvider {
     case "anthropic":
       return new AnthropicProvider(options);
     case "openai":
-      return new OpenAIProvider(options);
+      return new OpenAIProvider({ ...options, baseUrl: ai.baseUrl });
     case "gemini":
       return new GeminiProvider(options);
   }

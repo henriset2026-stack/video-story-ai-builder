@@ -34,7 +34,8 @@ ${describeVisualBible(visualBible)}
 
 TASK
 For each outline scene write:
-- title, duration (use the fixed value), location (specific: place + details), timeOfDay, purpose (its narrative job), emotionalBeat.
+- title: 2–5 words in the story language, naming this scene only — no film title, no "Scene N" prefix (e.g. "Daun yang Menguning").
+- duration (use the fixed value), location (specific: place + details), timeOfDay, purpose (its narrative job), emotionalBeat.
 - characters: exact names from the Character Bible who appear on screen.
 - action: what physically happens, beat by beat, filmable in the duration. No internal thoughts.
 - camera: shot size, angle, lens (focal length in mm), framing, movement (dolly, push-in, handheld, crane, static…), focus behaviour. Use professional terminology and follow the Visual Bible's lens language.

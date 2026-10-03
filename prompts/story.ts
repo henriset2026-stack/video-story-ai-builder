@@ -47,6 +47,8 @@ Write the Character Bible for every seeded character (keep their names).
 - accessories: exact items or "None".
 - personality and emotional arc: how they change from first to last scene.
 
+LENGTH: every visual field (appearance, face, hair, clothing, accessories) is ONE compact phrase of at most 25 words — comma-separated details, no full sentences, no backstory. These phrases are pasted into every image and video prompt, so brevity matters.
+
 ${jsonInstruction("characters")}`,
   };
 }

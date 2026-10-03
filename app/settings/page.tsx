@@ -14,7 +14,9 @@ export default function SettingsPage() {
     ? status.mockReason === "env"
       ? "Mock mode is on (AI_MOCK_MODE=true). Storyboards use deterministic sample data."
       : "No AI provider key is set, so storyboards use deterministic sample data. Add AI_PROVIDER_API_KEY to generate real stories."
-    : `Stories are written by ${status.aiProvider} using ${status.aiModel}.`;
+    : status.aiHost
+      ? `Stories are written by ${status.aiModel} through the OpenAI-compatible endpoint at ${status.aiHost}.`
+      : `Stories are written by ${status.aiProvider} using ${status.aiModel}.`;
 
   const storageDescription =
     status.storage === "supabase"
