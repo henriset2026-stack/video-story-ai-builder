@@ -79,7 +79,7 @@ backend work. Details: `docs/ai-pipeline.md`.
    public anon key cannot read or write data even if exposed. `server-only` guards prevent
    server modules from being bundled into client code. Errors are mapped to safe `AppError`
    codes; internals are logged without secrets and never returned.
-6. **Rate-limit-ready.** `lib/rate-limit.ts` defines a `RateLimiter` interface with an
+6. **Rate-limit-ready.** `lib/http.ts` defines a `RateLimiter` interface with an
    in-memory sliding-window implementation (per IP) used by the AI routes. It can be swapped
    for Upstash/Redis without touching route code.
 7. **Server-first UI.** Pages are Server Components that read from the repository directly.
@@ -118,18 +118,19 @@ Migration: `supabase/migrations/*_init.sql`.
 
 ```
 app/                 routes, layouts, route handlers (UI only — no prompts, no SQL)
-components/          ui/ layout/ create/ storyboard/ projects/
+components/          layout/ create/ storyboard/ projects/ settings/
 lib/
   ai/                provider interface, providers/, engines/, mock/, orchestrator
+  client/            browser-only helpers (default-settings preferences)
   continuity/        deterministic continuity rules + fixes
   db/                repository interface + supabase/local implementations + mappers
   schemas/           Zod schemas (input, AI output, API)
   config.ts          validated server env (server-only)
-  errors.ts          AppError + safe user messages
-  rate-limit.ts
+  errors.ts          AppError + safe user messages + secret redaction
+  http.ts            body parsing, JSON errors, rate limiter (server-only)
 prompts/             prompt builders per engine (pure functions)
 types/               TypeScript types inferred from Zod
-supabase/            migrations + CLI config
+supabase/            migrations
 docs/                product-spec, architecture, ai-pipeline, deployment
 tests/               Vitest unit tests (schemas, mock pipeline, continuity, repository)
 ```
