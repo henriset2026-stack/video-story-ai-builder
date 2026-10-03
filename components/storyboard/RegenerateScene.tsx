@@ -81,7 +81,7 @@ export function RegenerateScene({ sceneId, sceneNumber }: { sceneId: string; sce
             aria-describedby={`${id}-hint`}
             disabled={working}
             className="rounded border border-line bg-graphite-2 p-3 text-chalk placeholder:text-fog/70"
-            placeholder="Make the lighting more dramatic."
+            placeholder="Describe the change, or leave empty for a fresh take on this scene."
           />
           <div className="flex flex-wrap gap-2" role="group" aria-label="Suggestions">
             {SUGGESTIONS.map((s) => (
