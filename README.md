@@ -45,10 +45,10 @@ To generate real stories, set `AI_PROVIDER` and `AI_PROVIDER_API_KEY` in `.env.l
 | `AI_MOCK_MODE` | no | `false` | Force mock data even when a key is set |
 | `AI_TIMEOUT_MS` | no | `120000` | Timeout per AI call |
 | `AI_MOCK_LATENCY_MS` | no | `250` | Delay per mock step so progress is visible |
-| `NEXT_PUBLIC_SUPABASE_URL` | for Supabase | — | Project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | for Supabase | — | Server-only. Never expose to the browser |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | no | — | Reserved for future user auth; unused by the MVP |
-| `STORAGE_DRIVER` | no | auto | `supabase` when URL + service key are set, else `local` |
+| `FIREBASE_PROJECT_ID` | for Firestore | — | Firebase project id |
+| `FIREBASE_CLIENT_EMAIL` | for Firestore | — | Service-account email. Server-only |
+| `FIREBASE_PRIVATE_KEY` | for Firestore | — | Service-account private key. Server-only secret; never expose to the browser |
+| `STORAGE_DRIVER` | no | auto | `firestore` when the three Firebase values are set, else `local` |
 | `LOCAL_DATA_DIR` | no | `.data` | Folder for the local development store |
 
 `.env*` files are git-ignored (except `.env.example`). Keys are only read on the server; the Settings page shows which provider and storage are active without revealing any key.
@@ -56,7 +56,7 @@ To generate real stories, set `AI_PROVIDER` and `AI_PROVIDER_API_KEY` in `.env.l
 ## Storage
 
 - **Local files (default)** — one JSON file per project in `.data/projects/`. Good for development. Not suitable for serverless hosting.
-- **Supabase** — apply `supabase/migrations/20260923000000_init.sql`, then set the two Supabase variables. See [docs/deployment.md](docs/deployment.md).
+- **Cloud Firestore (Firebase)** — one document per project; create a Firestore database, deploy `firestore.rules` (denies all client access), and set the three Firebase variables. See [docs/deployment.md](docs/deployment.md).
 
 ## Scripts
 
@@ -67,7 +67,8 @@ To generate real stories, set `AI_PROVIDER` and `AI_PROVIDER_API_KEY` in `.env.l
 | `npm start` | Serve the production build |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | Generate Next.js route types, then `tsc --noEmit` |
-| `npm test` | Vitest: pipeline (all 8 sample ideas), continuity rules, providers, persistence |
+| `npm test` | Vitest: pipeline (all 8 sample ideas), continuity rules, providers, persistence (Firestore test skipped) |
+| `npm run test:firestore` | Same suite inside the Firestore emulator, including the Firestore repository (needs Java 21+) |
 
 ## Pages and API
 
@@ -90,10 +91,10 @@ app/          pages, layouts and route handlers
 components/   UI (create, storyboard, projects, settings, layout)
 lib/ai/       provider interface, providers, engines, mock data, orchestrator
 lib/continuity/  deterministic continuity rules
-lib/db/       repository interface, Supabase and local implementations
+lib/db/       repository interface, Firestore and local implementations
 lib/schemas/  Zod schemas — the contract for input, AI output and storage
 prompts/      prompt builders, one per engine (never inside UI code)
-supabase/     database migration
+firestore.rules, firebase.json   Firestore security rules and emulator config
 tests/        Vitest suites
 docs/         product spec, architecture, AI pipeline, deployment
 ```
@@ -103,15 +104,19 @@ docs/         product spec, architecture, AI pipeline, deployment
 - [Product specification](docs/product-spec.md) — what the product does and for whom
 - [Architecture](docs/architecture.md) — system design, data model, decisions
 - [AI pipeline](docs/ai-pipeline.md) — engines, prompts, validation, continuity, mock mode, adding a provider
-- [Deployment](docs/deployment.md) — Supabase setup, Vercel, production checklist
+- [Deployment](docs/deployment.md) — Firebase setup, Vercel, production checklist
 
 ## Status
 
-The MVP is feature-complete and verified in mock mode: lint, typecheck, build and 33 tests pass, and the main flows were exercised in a browser (create, progress, storyboard, copy, regenerate, projects, delete, error states, mobile width).
+The MVP is feature-complete. Lint, typecheck, build and 35 tests pass (including the Firestore repository against the emulator), and the main flows were exercised in a browser in mock mode (create, progress, storyboard, copy, regenerate, projects, delete, error states, mobile width).
+
+Verified with live services:
+
+- Real AI through an OpenAI-compatible router (Nara Router, `agnes-2.5-flash`): a full 3-scene storyboard in about 190 s, continuity PASS.
 
 Not yet verified against live services:
 
-- Real AI providers (Anthropic, OpenAI, Gemini) — implemented to each vendor's HTTP API but not yet run with a key.
-- Supabase storage — the migration and repository are written and the row mapping is unit-tested, but they haven't run against a real database.
+- The Anthropic and Gemini providers, and OpenAI's own API — implemented to each vendor's HTTP API but not run with a key.
+- Firestore storage against a live Firebase project (only the emulator so far).
 
 Out of scope for the MVP (see the roadmap in the product spec): image/video/voice/music generation, user accounts, payments, video editing.

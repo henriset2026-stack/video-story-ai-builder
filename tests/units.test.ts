@@ -10,8 +10,9 @@ import { extractJson, HttpProvider, type RawStructuredCall } from "@/lib/ai/prov
 import { OpenAIProvider } from "@/lib/ai/providers/openai";
 import { loadConfig } from "@/lib/config";
 import { allocateDurations, applyContinuityRules, summarizeContinuity } from "@/lib/continuity/rules";
+import { FirestoreRepository } from "@/lib/db/firestore";
 import { LocalFileRepository } from "@/lib/db/local";
-import { rowsToStoredProject, sceneToRow, toCreatePayload } from "@/lib/db/mappers";
+import type { ProjectRepository } from "@/lib/db/repository";
 import { redactSecrets } from "@/lib/errors";
 import { MemoryRateLimiter } from "@/lib/http";
 import { GenerationInputSchema, RegenerateSceneInputSchema } from "@/lib/schemas/input";
@@ -179,6 +180,18 @@ describe("provider contract", () => {
     expect(() => loadConfig(env({ AI_BASE_URL: "http://insecure.example.com" }))).toThrow(/AI_BASE_URL/);
   });
 
+  it("sanitizes FIREBASE_PRIVATE_KEY with quotes and literal \\n", () => {
+    const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
+    const cfg = loadConfig(
+      env({
+        FIREBASE_PROJECT_ID: "proj",
+        FIREBASE_CLIENT_EMAIL: "svc@proj.iam.gserviceaccount.com",
+        FIREBASE_PRIVATE_KEY: '"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"',
+      }),
+    );
+    expect(cfg.storage.firebase.privateKey).toBe("-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n");
+  });
+
   it("extracts JSON wrapped in prose or code fences", () => {
     expect(extractJson('Here:\n```json\n{"a":1}\n```')).toEqual({ a: 1 });
     expect(extractJson('text {"a":2} more')).toEqual({ a: 2 });
@@ -201,49 +214,49 @@ describe("security helpers", () => {
   });
 });
 
+/** Same behaviour contract for every storage driver. */
+async function repositoryContract(repo: ProjectRepository) {
+  const sb = await sample();
+  const created = await repo.createProject(sb);
+  expect(created.storyboard.scenes.every((s) => s.id)).toBe(true);
+  expect((await repo.listProjects()).find((p) => p.id === created.id)).toMatchObject({ title: sb.project.title, sceneCount: 3 });
+
+  // The full storyboard survives a round trip unchanged. toEqual ignores undefined, so clearing ids compares content.
+  const loaded = await repo.getProject(created.id);
+  expect({ ...loaded!.storyboard, scenes: loaded!.storyboard.scenes.map((s) => ({ ...s, id: undefined })) }).toEqual(sb);
+
+  const target = created.storyboard.scenes[1];
+  const loc = await repo.findScene(target.id!);
+  expect(loc?.sceneNumber).toBe(2);
+  expect(loc?.projectId).toBe(created.id);
+  const check = { ...created.storyboard.continuityCheck, status: "NEEDS_REVISION" as const };
+  await repo.updateScene(target.id!, { ...target, title: "New title" }, check);
+  const updated = await repo.getProject(created.id);
+  expect(updated?.storyboard.scenes[1].title).toBe("New title");
+  expect(updated?.storyboard.scenes[0]).toEqual(created.storyboard.scenes[0]);
+  expect(updated?.storyboard.continuityCheck.status).toBe("NEEDS_REVISION");
+  await expect(repo.updateScene(crypto.randomUUID(), target, check)).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+  expect(await repo.getProject("../../etc/passwd")).toBeNull();
+  expect(await repo.findScene("not-a-uuid")).toBeNull();
+  expect(await repo.deleteProject(created.id)).toBe(true);
+  expect(await repo.deleteProject(created.id)).toBe(false);
+  expect(await repo.getProject(created.id)).toBeNull();
+  expect((await repo.listProjects()).map((p) => p.id)).not.toContain(created.id);
+}
+
 describe("persistence", () => {
   const dirs: string[] = [];
   afterAll(async () => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))));
 
-  it("local repository: create, list, get, update scene, delete", async () => {
+  it("local file repository satisfies the contract", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "vsab-"));
     dirs.push(dir);
-    const repo = new LocalFileRepository(dir);
-    const sb = await sample();
-
-    const created = await repo.createProject(sb);
-    expect(created.storyboard.scenes.every((s) => s.id)).toBe(true);
-    expect((await repo.listProjects()).map((p) => p.id)).toEqual([created.id]);
-    expect((await repo.getProject(created.id))?.storyboard.project.title).toBe(sb.project.title);
-
-    const target = created.storyboard.scenes[1];
-    const loc = await repo.findScene(target.id!);
-    expect(loc?.sceneNumber).toBe(2);
-    await repo.updateScene(target.id!, { ...target, title: "New title" }, created.storyboard.continuityCheck);
-    expect((await repo.getProject(created.id))?.storyboard.scenes[1].title).toBe("New title");
-
-    expect(await repo.getProject("../../etc/passwd")).toBeNull();
-    expect(await repo.deleteProject(created.id)).toBe(true);
-    expect(await repo.deleteProject(created.id)).toBe(false);
-    expect(await repo.listProjects()).toEqual([]);
+    await repositoryContract(new LocalFileRepository(dir));
   });
 
-  it("Supabase mappers round-trip a storyboard", async () => {
-    const sb = await sample();
-    const payload = toCreatePayload(sb);
-    const now = new Date().toISOString();
-    const stored = rowsToStoredProject(
-      { id: crypto.randomUUID(), created_at: now, updated_at: now, ...payload.project },
-      {
-        id: crypto.randomUUID(),
-        project_id: crypto.randomUUID(),
-        ...payload.storyboard,
-        scenes: sb.scenes.map((s) => ({ ...sceneToRow(s), id: crypto.randomUUID() })).reverse(),
-      },
-    );
-    expect(stored).not.toBeNull();
-    expect(stored!.storyboard.scenes.map((s) => s.sceneNumber)).toEqual([1, 2, 3]);
-    // toEqual ignores undefined properties, so clearing the DB-assigned ids compares content only.
-    expect({ ...stored!.storyboard, scenes: stored!.storyboard.scenes.map((s) => ({ ...s, id: undefined })) }).toEqual(sb);
-  });
+  // Runs under `npm run test:firestore` (Firebase emulator), which sets FIRESTORE_EMULATOR_HOST.
+  it.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("Firestore repository satisfies the contract (emulator)", async () => {
+    await repositoryContract(new FirestoreRepository({ projectId: "demo-video-story-ai-builder" }));
+  }, 30_000);
 });

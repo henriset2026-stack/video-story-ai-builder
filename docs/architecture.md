@@ -10,7 +10,7 @@
 | Styling | Tailwind CSS 4 (CSS-first `@theme` config, no `tailwind.config.js`) |
 | Package manager | npm 11 (Node 24; Next 16 requires Node ≥ 20.9) |
 | Lint | ESLint 9 flat config (`eslint-config-next`); `next lint` no longer exists in v16 |
-| Supabase | CLI installed; no project linked; schema lives in `supabase/migrations` |
+| Supabase | CLI installed; no project linked (the MVP later moved to Firebase / Cloud Firestore) |
 | Env config | none → `.env.example` added |
 | Deployment | none → Vercel-compatible defaults (no custom server, `maxDuration` on AI routes) |
 
@@ -32,7 +32,7 @@ Browser ──► Next.js App Router
                               │
                     lib/ai (server-only)                 lib/db (server-only)
                     ├─ AIProvider interface              ├─ ProjectRepository interface
-                    ├─ anthropic | openai | gemini       ├─ SupabaseRepository (production)
+                    ├─ anthropic | openai | gemini       ├─ FirestoreRepository (production)
                     ├─ mock (deterministic)              └─ LocalFileRepository (dev fallback)
                     ├─ engines/* (one per module)
                     └─ orchestrator
@@ -50,7 +50,7 @@ input ─► 1 Understand (validate + normalise)
          ├ 7 Video Prompt Engine ┤  run in parallel (Prompt Generator + Audio Engine)
          └ 8 Audio Engine        ┘
       ─► 9 Continuity Engine   (deterministic rules + AI review → auto-fix → PASS/NEEDS_REVISION)
-      ─► Final JSON (Zod-validated Storyboard) ─► Repository (Supabase)
+      ─► Final JSON (Zod-validated Storyboard) ─► Repository (Firestore)
 ```
 
 Each engine is an independent module in `lib/ai/engines/`, with its own prompt builder in
@@ -68,17 +68,18 @@ backend work. Details: `docs/ai-pipeline.md`.
 2. **Mock mode.** `AI_MOCK_MODE=true`, or no `AI_PROVIDER_API_KEY`, selects `MockProvider`,
    which returns deterministic, theme-aware data for every engine task. The whole pipeline
    (progress events, continuity, persistence) runs unchanged, so UI work needs no API key.
-3. **Repository abstraction.** `ProjectRepository` hides storage. Supabase is used when
+3. **Repository abstraction.** `ProjectRepository` hides storage. Cloud Firestore is used when
    configured; otherwise a JSON file store in `.data/` is used for local development only
    (it is not suitable for serverless and the Settings page says which store is active).
-4. **Atomic saves.** A project, its storyboard and its scenes are written by one Postgres
-   function (`create_project_with_storyboard`) called through RPC, so a failed insert never
-   leaves half a project. Deleting a project cascades through foreign keys.
-5. **Security.** Supabase is accessed only from the server with
-   `SUPABASE_SERVICE_ROLE_KEY`. RLS is enabled on every table with no `anon` policies, so the
-   public anon key cannot read or write data even if exposed. `server-only` guards prevent
-   server modules from being bundled into client code. Errors are mapped to safe `AppError`
-   codes; internals are logged without secrets and never returned.
+   Both implementations pass the same contract test (Firestore via the emulator).
+4. **Atomic saves.** Each project is one Firestore document containing its whole storyboard,
+   so creating a project is a single write and regenerating a scene is a single transaction —
+   a failure can never leave half a project. Deleting a project deletes one document.
+5. **Security.** Firestore is accessed only from the server through the Firebase Admin SDK
+   with a service account (`FIREBASE_PRIVATE_KEY`, server-only). `firestore.rules` denies all
+   client reads and writes, so nothing but this server can reach the data. `server-only`
+   guards prevent server modules from being bundled into client code. Errors are mapped to
+   safe `AppError` codes; internals are logged with keys (including PEM private keys) redacted.
 6. **Rate-limit-ready.** `lib/http.ts` defines a `RateLimiter` interface with an
    in-memory sliding-window implementation (per IP) used by the AI routes. It can be swapped
    for Upstash/Redis without touching route code.
@@ -91,28 +92,29 @@ backend work. Details: `docs/ai-pipeline.md`.
 
 | Master prompt | Implementation | Reason |
 | --- | --- | --- |
-| Env: 4 variables | Adds `SUPABASE_SERVICE_ROLE_KEY` (server-only), optional `AI_MODEL`, `AI_MOCK_MODE`, `AI_TIMEOUT_MS`, `STORAGE_DRIVER` | Without auth, the anon key cannot be given write access safely. Model choice must be configurable. |
-| `storyboards` columns | Adds `synopsis` | The storyboard UI shows a story paragraph. |
-| `projects` columns | Adds nullable `owner_id` | Ready for accounts (V10) without a migration of existing rows. |
+| Database: Supabase PostgreSQL with `projects` / `storyboards` / `scenes` tables | Cloud Firestore (Firebase), one document per project | Changed at the product owner's request. The repository interface kept the rest of the app unchanged. |
+| Env: 4 variables | Firebase service-account values (server-only), optional `AI_BASE_URL`, `AI_MODEL`, `AI_MOCK_MODE`, `AI_TIMEOUT_MS`, `STORAGE_DRIVER` | No user auth yet, so only the server may touch the database. Model and endpoint must be configurable. |
+| Storyboard fields | Adds `synopsis` | The storyboard UI shows a story paragraph. |
+| Project fields | Adds `ownerId` (null for now) | Ready for accounts (V10) without migrating existing documents. |
 
-## 5. Data model (Supabase / Postgres)
+## 5. Data model (Cloud Firestore)
 
 ```
-projects 1 ── 1 storyboards 1 ── N scenes
+projects/{projectId}        one document per project (projectId is a UUID)
+  title, theme, genre, duration, aspectRatio, language, sceneCount, createdAt   ← list view
+  storyboard                 full Storyboard (project meta, characters, visualBible,
+                             scenes[] with ids, globalNegativePrompt, continuityCheck)
+  sceneIds[]                 for `array-contains` scene lookup
+  ownerId                    null until accounts exist
+  updatedAt
 ```
 
-- `projects`: id, owner_id?, title, theme, genre, duration, aspect_ratio, language, timestamps.
-- `storyboards`: id, project_id (FK, unique, cascade), logline, synopsis, tone, target_emotion,
-  character_bible (jsonb), visual_bible (jsonb), global_negative_prompt, continuity_check (jsonb), timestamps.
-- `scenes`: id, storyboard_id (FK, cascade), scene_number (unique per storyboard), title,
-  duration, location, time_of_day, purpose, emotional_beat, characters (jsonb), action,
-  image_prompt, video_prompt, dialogue (jsonb), voice_over (jsonb), music (jsonb), sfx (jsonb),
-  camera (jsonb), motion (jsonb), transition (jsonb), negative_prompt, timestamps.
-- Indexes: `projects(created_at desc)`, `storyboards(project_id)` unique,
-  `scenes(storyboard_id, scene_number)` unique.
-- `updated_at` maintained by trigger.
+- The document mirrors the Zod `StoryboardSchema`, and every read is validated again; invalid documents are ignored.
+- Timestamps are ISO 8601 strings, so `orderBy("createdAt", "desc")` sorts correctly.
+- Queries (`orderBy createdAt`, `sceneIds array-contains`) use single-field indexes Firestore creates automatically; `firestore.indexes.json` is empty.
+- A storyboard is well under the 1 MiB document limit even at 8 scenes.
 
-Migration: `supabase/migrations/*_init.sql`.
+Config: `firebase.json`, `firestore.rules` (deny all client access), `firestore.indexes.json`.
 
 ## 6. Folder structure
 
@@ -123,14 +125,14 @@ lib/
   ai/                provider interface, providers/, engines/, mock/, orchestrator
   client/            browser-only helpers (default-settings preferences)
   continuity/        deterministic continuity rules + fixes
-  db/                repository interface + supabase/local implementations + mappers
+  db/                repository interface + firestore/local implementations + mappers
   schemas/           Zod schemas (input, AI output, API)
   config.ts          validated server env (server-only)
   errors.ts          AppError + safe user messages + secret redaction
   http.ts            body parsing, JSON errors, rate limiter (server-only)
 prompts/             prompt builders per engine (pure functions)
 types/               TypeScript types inferred from Zod
-supabase/            migrations
+firestore.rules, firebase.json, firestore.indexes.json   Firebase config
 docs/                product-spec, architecture, ai-pipeline, deployment
 tests/               Vitest unit tests (schemas, mock pipeline, continuity, repository)
 ```
@@ -145,7 +147,7 @@ tests/               Vitest unit tests (schemas, mock pipeline, continuity, repo
 | 4 | Mock storyboard + storyboard UI (PromptBlock, scene cards) | + browser |
 | 5 | Zod schemas for input / AI output / API; types inferred | + unit tests |
 | 6 | AI engine: providers, engines, prompts, orchestrator, streaming `/api/generate` | + tests with mock provider |
-| 7 | Supabase: migration, RPC, repository, project pages + API | + local store tests; Supabase when a project is available |
+| 7 | Persistence: repository, project pages + API (built on Supabase, later moved to Firestore) | + contract tests for local and Firestore (emulator) |
 | 8 | Scene regeneration (API + dialog) | + browser |
 | 9 | Continuity engine (rules + AI review + auto-fix) | + unit tests |
 | 10 | QA: 8 test themes, error states, responsive, keyboard/a11y | + browser at mobile/tablet/desktop |
@@ -158,11 +160,11 @@ the engines and the UI all share), then verified together.
 
 | Version | Hook in the current architecture |
 | --- | --- |
-| V2 image / V3 video / V4 voice / V5 music | New `MediaProvider` interfaces beside `AIProvider`; a `scene_assets` table keyed by `scene_id`; prompts already exist per scene. |
+| V2 image / V3 video / V4 voice / V5 music | New `MediaProvider` interfaces beside `AIProvider`; a `projects/{id}/assets` subcollection keyed by scene id; prompts already exist per scene. |
 | V6 editor | Scenes are ordered, timed rows — a timeline can be built on them. |
 | V7 brand kit | Extra input to Visual Engine prompt builder. |
-| V8 character memory | Character Bible is already a standalone JSON document; store reusable characters in a `characters` table and inject into the Character Engine. |
+| V8 character memory | Character Bible is already a standalone JSON document; store reusable characters in a `characters` collection and inject into the Character Engine. |
 | V9 templates | Presets = saved `GenerationInput` + prompt overrides. |
-| V10 teams | `owner_id` column + RLS policies on `auth.uid()`. |
+| V10 teams | `ownerId` field + Firestore rules on `request.auth.uid`. |
 | V11 API | Route handlers already validate with Zod and return typed JSON; add API-key auth in `proxy.ts`. |
 | V12 billing | Rate limiter interface becomes a quota check. |

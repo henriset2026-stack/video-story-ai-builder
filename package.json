@@ -8,10 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:firestore": "npx --yes firebase-tools@15 emulators:exec --only firestore --project demo-video-story-ai-builder 'vitest run'"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.117.1",
+    "firebase-admin": "^14.5.0",
     "next": "16.3.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",

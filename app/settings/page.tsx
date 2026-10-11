@@ -19,11 +19,11 @@ export default function SettingsPage() {
       : `Stories are written by ${status.aiProvider} using ${status.aiModel}.`;
 
   const storageDescription =
-    status.storage === "supabase"
-      ? "Projects are saved to Supabase."
-      : status.supabaseConfigured
+    status.storage === "firestore"
+      ? `Projects are saved to Cloud Firestore in the Firebase project ${status.firebaseProjectId}.`
+      : status.firestoreConfigured
         ? "Projects are saved as local files (STORAGE_DRIVER=local)."
-        : "Supabase isn’t configured, so projects are saved as local files in .data/. Use Supabase for any shared or hosted deployment.";
+        : "Firebase isn’t configured, so projects are saved as local files in .data/. Use Firestore for any shared or hosted deployment.";
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
@@ -53,7 +53,7 @@ export default function SettingsPage() {
           <div className="grid gap-1 py-4 sm:grid-cols-[12rem_1fr]">
             <dt className="text-fog">Project storage</dt>
             <dd>
-              <span className="font-semibold">{status.storage === "supabase" ? "Supabase" : "Local files"}</span>
+              <span className="font-semibold">{status.storage === "firestore" ? "Cloud Firestore" : "Local files"}</span>
               <p className="mt-1 text-sm text-fog">{storageDescription}</p>
             </dd>
           </div>

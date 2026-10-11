@@ -9,7 +9,7 @@ import { toSummary } from "./mappers";
 import type { ProjectRepository, SceneLocation } from "./repository";
 
 // Development-only store: one JSON file per project under LOCAL_DATA_DIR/projects.
-// Not suitable for serverless deployments (ephemeral, per-instance file systems) — use Supabase there.
+// Not suitable for serverless deployments (ephemeral, per-instance file systems) — use Firestore there.
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

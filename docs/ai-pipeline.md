@@ -57,7 +57,7 @@ The audio engine gets a word budget per scene (≈2.3 words per second) so dialo
 3. **One repair retry.** On failure, the provider re-asks with the validation errors appended. A second failure becomes `AI_INVALID_RESPONSE`.
 4. **Truncation is an error.** `max_tokens` / `length` / `MAX_TOKENS` stop reasons are rejected instead of parsed.
 5. **Final validation** of the assembled storyboard against `StoryboardSchema` before saving.
-6. **Read-back validation.** Rows loaded from Supabase or the local store are validated again; invalid rows are ignored, not rendered.
+6. **Read-back validation.** Documents loaded from Firestore or the local store are validated again; invalid ones are ignored, not rendered.
 
 Minimum lengths in the schemas (e.g. 160 characters for image and video prompts) enforce the quality bar mechanically.
 
@@ -90,7 +90,7 @@ If the AI review call fails, generation still succeeds with the rule-based resul
 2. Keeps the scene's number and duration.
 3. Runs the continuity engine with AI rewrites restricted to the regenerated scene.
 4. Re-assembles the result from the **original** bibles and other scenes, so nothing else can change even if a step misbehaves.
-5. Persists the scene and the new continuity check atomically (`apply_scene_regeneration` RPC in Supabase).
+5. Persists the scene and the new continuity check atomically (one Firestore transaction on the project document).
 
 ## 6. Negative prompts
 

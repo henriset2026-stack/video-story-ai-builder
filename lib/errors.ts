@@ -54,9 +54,10 @@ export function toAppError(error: unknown): AppError {
 }
 
 const SECRET_PATTERNS = [
-  /sk-[a-zA-Z0-9_-]{10,}/g, // OpenAI / Anthropic style keys
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, // PEM keys (Firebase service accounts)
+  /sk-[a-zA-Z0-9_-]{10,}/g, // OpenAI / Anthropic / router style keys
   /AIza[0-9A-Za-z_-]{20,}/g, // Google API keys
-  /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, // JWTs (Supabase keys)
+  /eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, // JWTs / OAuth tokens
 ];
 
 export function redactSecrets(value: string): string {

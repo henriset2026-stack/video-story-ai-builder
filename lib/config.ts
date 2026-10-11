@@ -2,7 +2,7 @@ import "server-only";
 import { z } from "zod";
 
 // Validated server configuration. Server-only: importing this from a Client Component fails the build,
-// so secrets such as AI_PROVIDER_API_KEY and SUPABASE_SERVICE_ROLE_KEY can never reach the browser.
+// so secrets such as AI_PROVIDER_API_KEY and FIREBASE_PRIVATE_KEY can never reach the browser.
 
 export const AI_PROVIDERS = ["anthropic", "openai", "gemini"] as const;
 export type AIProviderName = (typeof AI_PROVIDERS)[number];
@@ -36,9 +36,13 @@ const EnvSchema = z.object({
   AI_MOCK_MODE: bool,
   AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).max(600_000).default(120_000),
   AI_MOCK_LATENCY_MS: z.coerce.number().int().min(0).max(5_000).default(250),
-  NEXT_PUBLIC_SUPABASE_URL: optionalString,
-  SUPABASE_SERVICE_ROLE_KEY: optionalString,
-  STORAGE_DRIVER: z.enum(["supabase", "local"]).optional(),
+  FIREBASE_PROJECT_ID: optionalString,
+  FIREBASE_CLIENT_EMAIL: optionalString,
+  /** Service-account private key. Hosts often store it with literal "\n"; those are restored below. */
+  FIREBASE_PRIVATE_KEY: optionalString,
+  /** Set by the Firebase emulator (e.g. "127.0.0.1:8080"); the Admin SDK then needs no credentials. */
+  FIRESTORE_EMULATOR_HOST: optionalString,
+  STORAGE_DRIVER: z.enum(["firestore", "local"]).optional(),
   LOCAL_DATA_DIR: z.string().default(".data"),
 });
 
@@ -56,9 +60,13 @@ export interface AppConfig {
     mockLatencyMs: number;
   };
   storage: {
-    driver: "supabase" | "local";
-    supabaseUrl: string | undefined;
-    supabaseServiceRoleKey: string | undefined;
+    driver: "firestore" | "local";
+    firebase: {
+      projectId: string | undefined;
+      clientEmail: string | undefined;
+      privateKey: string | undefined;
+      usingEmulator: boolean;
+    };
     localDataDir: string;
   };
 }
@@ -71,7 +79,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment configuration: ${keys}`);
   }
   const e = parsed.data;
-  const supabaseConfigured = Boolean(e.NEXT_PUBLIC_SUPABASE_URL && e.SUPABASE_SERVICE_ROLE_KEY);
+  const usingEmulator = Boolean(e.FIRESTORE_EMULATOR_HOST);
+  const firestoreConfigured = Boolean(
+    e.FIREBASE_PROJECT_ID && (usingEmulator || (e.FIREBASE_CLIENT_EMAIL && e.FIREBASE_PRIVATE_KEY)),
+  );
   const mockReason = e.AI_MOCK_MODE ? "env" : !e.AI_PROVIDER_API_KEY ? "missing-key" : null;
 
   return {
@@ -86,9 +97,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       mockLatencyMs: e.AI_MOCK_LATENCY_MS,
     },
     storage: {
-      driver: e.STORAGE_DRIVER ?? (supabaseConfigured ? "supabase" : "local"),
-      supabaseUrl: e.NEXT_PUBLIC_SUPABASE_URL,
-      supabaseServiceRoleKey: e.SUPABASE_SERVICE_ROLE_KEY,
+      driver: e.STORAGE_DRIVER ?? (firestoreConfigured ? "firestore" : "local"),
+      firebase: {
+        projectId: e.FIREBASE_PROJECT_ID,
+        clientEmail: e.FIREBASE_CLIENT_EMAIL,
+        privateKey: e.FIREBASE_PRIVATE_KEY?.trim().replace(/^["']|["']$/g, "").replace(/\\n/g, "\n"),
+        usingEmulator,
+      },
       localDataDir: e.LOCAL_DATA_DIR,
     },
   };
@@ -112,6 +127,11 @@ export function getPublicStatus() {
     mockMode: c.ai.mock,
     mockReason: c.ai.mockReason,
     storage: c.storage.driver,
-    supabaseConfigured: Boolean(c.storage.supabaseUrl && c.storage.supabaseServiceRoleKey),
+    firestoreConfigured: Boolean(
+      c.storage.firebase.projectId &&
+        (c.storage.firebase.usingEmulator || (c.storage.firebase.clientEmail && c.storage.firebase.privateKey)),
+    ),
+    /** Firebase project id is not secret; shown so operators can confirm which project is in use. */
+    firebaseProjectId: c.storage.driver === "firestore" ? (c.storage.firebase.projectId ?? null) : null,
   };
 }
