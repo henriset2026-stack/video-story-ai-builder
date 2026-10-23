@@ -1,62 +1,53 @@
 # Deployment
 
-The app is a standard Next.js 16 project (no custom server), so it deploys to Vercel or any Node.js host. Production needs two things the local setup doesn't: **Firebase (Cloud Firestore)** for storage and an **AI provider key**.
+The app is a standard Next.js 16 project (no custom server), so it deploys to Vercel or any Node.js host. Production needs two things the local setup doesn't: **Supabase** for storage and an **AI provider key**.
 
-## 1. Firebase
+## 1. Supabase
 
-### Create the project and database
+### Create the database
 
-1. Create a project in the [Firebase console](https://console.firebase.google.com) (or `npx firebase-tools@15 projects:create`).
-2. Open **Build → Firestore Database → Create database**. Choose **production mode** and a location near your users (for Indonesia: `asia-southeast2`, Jakarta). The location cannot be changed later.
-3. Deploy the security rules and index config from this repository:
+1. Create a project at [supabase.com](https://supabase.com).
+2. Apply the migration `supabase/migrations/20260923000000_init.sql`, either:
+   - **CLI:** link the project, then push the migration.
 
-   ```bash
-   npx firebase-tools@15 login
-   ```
+     ```bash
+     supabase link --project-ref <your-project-ref>
+     ```
 
-   ```bash
-   npx firebase-tools@15 deploy --only firestore:rules,firestore:indexes --project <your-project-id>
-   ```
+     ```bash
+     supabase db push
+     ```
 
-No schema migration is needed. The app stores **one document per project** in the `projects` collection:
+   - **Dashboard:** open SQL Editor, paste the file's contents, run it once.
 
-| Field | Purpose |
-| --- | --- |
-| `title`, `theme`, `genre`, `duration`, `aspectRatio`, `language`, `sceneCount`, `createdAt` | Summary used by the project list (`createdAt` is an ISO 8601 string, ordered descending) |
-| `storyboard` | The full validated storyboard, including scenes with their ids |
-| `sceneIds` | Scene ids, so a scene can be found with an `array-contains` query |
-| `ownerId` | Reserved for user accounts; `null` for now |
-| `updatedAt` | Last change (ISO 8601) |
+The migration creates `projects`, `storyboards` and `scenes` (foreign keys with cascade delete, indexes, `updated_at` triggers), enables Row Level Security, and adds two functions the app calls through RPC:
 
-A storyboard is far below Firestore's 1 MiB document limit. Because a project is one document, creating a project is a single write and regenerating a scene is a single transaction — both atomic. The queries use single-field indexes that Firestore creates automatically, so `firestore.indexes.json` is empty.
+- `create_project_with_storyboard(payload)` — inserts a project, its storyboard and all scenes in one transaction.
+- `apply_scene_regeneration(scene_id, scene, continuity)` — replaces one scene and the continuity check in one transaction.
 
-### Service-account credentials
+### Keys
 
-**Project settings → Service accounts → Generate new private key** downloads a JSON file. Copy three values from it:
+From **Project Settings → API**:
 
-| JSON field | Env variable | Exposure |
+| Value | Env variable | Exposure |
 | --- | --- | --- |
-| `project_id` | `FIREBASE_PROJECT_ID` | not secret |
-| `client_email` | `FIREBASE_CLIENT_EMAIL` | server-only |
-| `private_key` | `FIREBASE_PRIVATE_KEY` | **server-only secret** |
-
-Keep the JSON file out of the repository and delete it once the values are stored. The private key can be pasted with real line breaks, or on one line with literal `\n` — the app restores the line breaks either way.
+| Project URL | `NEXT_PUBLIC_SUPABASE_URL` | public |
+| `service_role` key | `SUPABASE_SERVICE_ROLE_KEY` | **server-only secret** |
+| `anon` key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | optional, unused by the MVP |
 
 ### Access model
 
-There are no user accounts yet, so the server is the only database client. It uses the Firebase **Admin SDK** with the service account, only in route handlers and server components (`server-only` guards fail the build if a client component imports it).
+There are no user accounts yet, so the server is the only database client. It uses the service-role key, which only ever runs in route handlers and server components (`server-only` guards fail the build if a client component imports it).
 
-`firestore.rules` denies **all** reads and writes from browsers and mobile clients. The Admin SDK bypasses rules, so the app works while nothing else can reach the data. To confirm after deploying the rules, this unauthenticated request must be refused (HTTP 403 `PERMISSION_DENIED`), never return projects:
+RLS is enabled on all tables with **no** policies for `anon` or `authenticated`, and table privileges and function execute rights are revoked from those roles. Even if the anon key leaks, it cannot read or write projects.
+
+To confirm after setup, this request with the anon key should return an error or an empty list — never project data:
 
 ```bash
-curl "https://firestore.googleapis.com/v1/projects/<your-project-id>/databases/(default)/documents/projects"
+curl "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/projects?select=id" -H "apikey: $NEXT_PUBLIC_SUPABASE_ANON_KEY"
 ```
 
-When accounts are added, set `ownerId` on each project and open `projects/{id}` to `request.auth.uid == resource.data.ownerId` (see the roadmap in `docs/architecture.md`).
-
-### Cost
-
-The free Spark plan includes 50,000 document reads and 20,000 writes per day, plus 1 GiB of stored data, which comfortably covers a small team. Each generation is one write; opening a storyboard is one read; the project list reads one document per project shown.
+When accounts are added, set `projects.owner_id` and add policies on `owner_id = auth.uid()` (see the roadmap in `docs/architecture.md`).
 
 ## 2. Vercel
 
@@ -69,22 +60,21 @@ The free Spark plan includes 50,000 document reads and 20,000 writes per day, pl
    | `AI_PROVIDER_API_KEY` | your provider key |
    | `AI_BASE_URL` | optional OpenAI-compatible router, e.g. `https://router.bynara.id/v1` |
    | `AI_MODEL` | optional model override |
-   | `FIREBASE_PROJECT_ID` | from the service-account JSON |
-   | `FIREBASE_CLIENT_EMAIL` | from the service-account JSON |
-   | `FIREBASE_PRIVATE_KEY` | from the service-account JSON |
-   | `STORAGE_DRIVER` | `firestore` |
+   | `NEXT_PUBLIC_SUPABASE_URL` | from Supabase |
+   | `SUPABASE_SERVICE_ROLE_KEY` | from Supabase |
+   | `STORAGE_DRIVER` | `supabase` |
 
    Secrets can be added from your own terminal without pasting them anywhere shared:
 
    ```bash
-   npx vercel@latest env add FIREBASE_PRIVATE_KEY production
+   npx vercel@latest env add SUPABASE_SERVICE_ROLE_KEY production
    ```
 
 3. Deploy.
 
-### Why set `STORAGE_DRIVER=firestore`
+### Why set `STORAGE_DRIVER=supabase`
 
-Without it, the app picks local-file storage whenever the Firebase variables are missing. Serverless file systems are read-only and per-instance, so saving would fail and projects would never persist. With `STORAGE_DRIVER=firestore`, a missing variable fails loudly instead of silently falling back.
+Without it, the app picks local-file storage whenever the Supabase variables are missing. Serverless file systems are read-only and per-instance, so saving would fail and projects would never persist. With `STORAGE_DRIVER=supabase`, a missing variable fails loudly instead of silently falling back.
 
 ### Function duration
 
@@ -110,34 +100,25 @@ npm run build
 npm start
 ```
 
-Set the same environment variables. On a single long-running server, local-file storage works (projects in `LOCAL_DATA_DIR`), but Firestore is still recommended for backups and multiple instances.
+Set the same environment variables. On a single long-running server, local-file storage works (projects in `LOCAL_DATA_DIR`), but Supabase is still recommended for backups and multiple instances.
 
-## 4. Testing Firestore locally
+## 4. Production checklist
 
-`npm run test:firestore` starts the Firestore emulator (needs Java 21 or newer) and runs the whole suite against it, including the storage contract test for `FirestoreRepository`. No cloud project or credentials are used. On macOS with Homebrew, Java is keg-only, so put it on the PATH for the run:
-
-```bash
-PATH="/opt/homebrew/opt/openjdk/bin:$PATH" npm run test:firestore
-```
-
-## 5. Production checklist
-
-- [ ] Firestore database created; rules deployed; the unauthenticated request above returns 403
-- [ ] `STORAGE_DRIVER=firestore` and the three Firebase values set as server-side env vars
-- [ ] Service-account JSON file deleted from your machine after copying the values
-- [ ] `AI_PROVIDER_API_KEY` set; `/settings` shows the provider (not "Mock data") and "Cloud Firestore"
+- [ ] Migration applied; anon-key request above returns no data
+- [ ] `STORAGE_DRIVER=supabase`, URL and service-role key set as server-side env vars
+- [ ] `AI_PROVIDER_API_KEY` set; `/settings` shows the provider (not "Mock data") and "Supabase"
 - [ ] `AI_MOCK_MODE` unset or `false`
 - [ ] One full generation and one scene regeneration succeed on the deployed URL
 - [ ] Function duration limit is at least what a generation needs on your plan
 - [ ] Shared rate limiter in place if the app is public
-- [ ] `npm run lint`, `npm run typecheck`, `npm run test:firestore` and `npm run build` pass on the commit being deployed
+- [ ] `npm run lint`, `npm run typecheck`, `npm test` and `npm run build` pass on the commit being deployed
 
-## 6. Troubleshooting
+## 5. Troubleshooting
 
 | Symptom | Likely cause |
 | --- | --- |
 | Header shows "Mock data" in production | `AI_PROVIDER_API_KEY` missing or `AI_MOCK_MODE=true` |
-| "Your storyboard was created but could not be saved" | Storage misconfigured: wrong Firebase project or credentials, Firestore database not created, or local storage on a serverless host |
+| "Your storyboard was created but could not be saved" | Storage misconfigured: wrong Supabase URL/key, migration not applied, or local storage on a serverless host |
 | Every generation fails with the generic AI error | Invalid key or model name, or no provider credit — check the server logs (keys are redacted) and `AI_MODEL` |
 | "The AI took too long to respond" | `AI_TIMEOUT_MS` too low for the model, or the platform's function limit was reached |
-| Projects page shows an error | Firestore unreachable, database not created, or the private key was pasted incorrectly — check the server logs |
+| Projects page shows an error | Supabase unreachable or the migration is missing — check the server logs |

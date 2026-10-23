@@ -2,8 +2,8 @@ import "server-only";
 import { getConfig } from "@/lib/config";
 import { AppError } from "@/lib/errors";
 import type { ContinuityCheck, ProjectSummary, Scene, StoredProject, Storyboard } from "@/types";
-import { FirestoreRepository } from "./firestore";
 import { LocalFileRepository } from "./local";
+import { SupabaseRepository } from "./supabase";
 
 // Storage abstraction. Route handlers and pages depend on this interface only.
 
@@ -14,7 +14,7 @@ export interface SceneLocation {
 }
 
 export interface ProjectRepository {
-  readonly driver: "firestore" | "local";
+  readonly driver: "supabase" | "local";
   listProjects(limit?: number): Promise<ProjectSummary[]>;
   getProject(id: string): Promise<StoredProject | null>;
   /** Persists a new project atomically and returns it with generated ids. */
@@ -31,14 +31,13 @@ let instance: ProjectRepository | null = null;
 export function getRepository(): ProjectRepository {
   if (instance) return instance;
   const { storage } = getConfig();
-  if (storage.driver === "firestore") {
-    const fb = storage.firebase;
-    if (!fb.projectId || (!fb.usingEmulator && (!fb.clientEmail || !fb.privateKey))) {
+  if (storage.driver === "supabase") {
+    if (!storage.supabaseUrl || !storage.supabaseServiceRoleKey) {
       throw new AppError("DB_FAILED", {
-        detail: "STORAGE_DRIVER=firestore requires FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY",
+        detail: "STORAGE_DRIVER=supabase requires NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY",
       });
     }
-    instance = new FirestoreRepository({ projectId: fb.projectId, clientEmail: fb.clientEmail, privateKey: fb.privateKey });
+    instance = new SupabaseRepository(storage.supabaseUrl, storage.supabaseServiceRoleKey);
   } else {
     instance = new LocalFileRepository(storage.localDataDir);
   }

@@ -46,7 +46,8 @@ next-env.d.ts
 # local development data store
 /.data/
 
-# firebase
-firebase-debug.log
-firestore-debug.log
-.firebase/
+# supabase local
+supabase/.temp/
+
+# local editor config
+/.kilo/

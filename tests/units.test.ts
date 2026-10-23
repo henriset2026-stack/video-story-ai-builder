@@ -10,9 +10,10 @@ import { extractJson, HttpProvider, type RawStructuredCall } from "@/lib/ai/prov
 import { OpenAIProvider } from "@/lib/ai/providers/openai";
 import { loadConfig } from "@/lib/config";
 import { allocateDurations, applyContinuityRules, summarizeContinuity } from "@/lib/continuity/rules";
-import { FirestoreRepository } from "@/lib/db/firestore";
 import { LocalFileRepository } from "@/lib/db/local";
+import { rowsToStoredProject, sceneToRow, toCreatePayload } from "@/lib/db/mappers";
 import type { ProjectRepository } from "@/lib/db/repository";
+import { SupabaseRepository } from "@/lib/db/supabase";
 import { redactSecrets } from "@/lib/errors";
 import { MemoryRateLimiter } from "@/lib/http";
 import { GenerationInputSchema, RegenerateSceneInputSchema } from "@/lib/schemas/input";
@@ -180,16 +181,17 @@ describe("provider contract", () => {
     expect(() => loadConfig(env({ AI_BASE_URL: "http://insecure.example.com" }))).toThrow(/AI_BASE_URL/);
   });
 
-  it("sanitizes FIREBASE_PRIVATE_KEY with quotes and literal \\n", () => {
+  it("detects Supabase configuration and selects supabase driver", () => {
     const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
     const cfg = loadConfig(
       env({
-        FIREBASE_PROJECT_ID: "proj",
-        FIREBASE_CLIENT_EMAIL: "svc@proj.iam.gserviceaccount.com",
-        FIREBASE_PRIVATE_KEY: '"-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----\\n"',
+        NEXT_PUBLIC_SUPABASE_URL: "https://xyz.supabase.co",
+        SUPABASE_SERVICE_ROLE_KEY: "ey-secret-key",
       }),
     );
-    expect(cfg.storage.firebase.privateKey).toBe("-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----\n");
+    expect(cfg.storage.driver).toBe("supabase");
+    expect(cfg.storage.supabaseUrl).toBe("https://xyz.supabase.co");
+    expect(cfg.storage.supabaseServiceRoleKey).toBe("ey-secret-key");
   });
 
   it("extracts JSON wrapped in prose or code fences", () => {
@@ -255,8 +257,55 @@ describe("persistence", () => {
     await repositoryContract(new LocalFileRepository(dir));
   });
 
-  // Runs under `npm run test:firestore` (Firebase emulator), which sets FIRESTORE_EMULATOR_HOST.
-  it.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)("Firestore repository satisfies the contract (emulator)", async () => {
-    await repositoryContract(new FirestoreRepository({ projectId: "demo-video-story-ai-builder" }));
+  it("Supabase mappers round-trip a storyboard", async () => {
+    const sb = await sample();
+    const payload = toCreatePayload(sb);
+    const now = new Date().toISOString();
+    const stored = rowsToStoredProject(
+      { id: crypto.randomUUID(), created_at: now, updated_at: now, ...payload.project },
+      {
+        id: crypto.randomUUID(),
+        project_id: crypto.randomUUID(),
+        ...payload.storyboard,
+        scenes: sb.scenes.map((s) => ({ ...sceneToRow(s), id: crypto.randomUUID() })).reverse(),
+      },
+    );
+    expect(stored).not.toBeNull();
+    expect(stored!.storyboard.scenes.map((s) => s.sceneNumber)).toEqual([1, 2, 3]);
+    // toEqual ignores undefined properties, so clearing the DB-assigned ids compares content only.
+    expect({ ...stored!.storyboard, scenes: stored!.storyboard.scenes.map((s) => ({ ...s, id: undefined })) }).toEqual(sb);
+  });
+
+  it("handles Postgres timestamptz space formats and defensive row mapping", async () => {
+    const sb = await sample();
+    const payload = toCreatePayload(sb);
+    // PostgreSQL can return timestamptz formatted with a space instead of 'T'
+    const pgTimestamp = "2026-09-23 04:12:34+00";
+    const stored = rowsToStoredProject(
+      { id: crypto.randomUUID(), created_at: pgTimestamp, updated_at: pgTimestamp, ...payload.project },
+      {
+        id: crypto.randomUUID(),
+        project_id: crypto.randomUUID(),
+        ...payload.storyboard,
+        scenes: sb.scenes.map((s) => {
+          const row = sceneToRow(s);
+          return {
+            ...row,
+            id: crypto.randomUUID(),
+            // test dialogue provided as plain array or without object wrapper
+            dialogue: { mode: "dialogue", lines: row.dialogue.lines },
+          };
+        }),
+      },
+    );
+    expect(stored).not.toBeNull();
+    expect(stored?.createdAt).toBe(new Date(pgTimestamp).toISOString());
+  });
+
+  // Runs against a live Supabase project when NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set.
+  it.skipIf(!process.env.SUPABASE_SERVICE_ROLE_KEY)("Supabase repository satisfies the contract (live)", async () => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    await repositoryContract(new SupabaseRepository(url, key));
   }, 30_000);
 });
